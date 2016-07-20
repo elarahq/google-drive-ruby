@@ -106,7 +106,7 @@ module GoogleDrive
   #   scope=
   #   save
   def self.saved_session(
-      path_or_config = nil, proxy = nil, client_id = nil, client_secret = nil)
+      path_or_config = nil, proxy = nil, client_id = nil, client_secret = nil, prompt=false)
     config =
       case path_or_config
       when String
@@ -126,12 +126,17 @@ module GoogleDrive
       config.client_id = client_id
       config.client_secret = client_secret
     end
-    if !config.client_id && !config.client_secret
-      config.client_id = '452925651630-egr1f18o96acjjvphpbbd1qlsevkho1d.apps.googleusercontent.com'
-      config.client_secret = '1U3-Krii5x1oLPrwD5zgn-ry'
-    elsif !config.client_id || !config.client_secret
+
+    # if !config.client_id && !config.client_secret
+    #   config.client_id = '452925651630-egr1f18o96acjjvphpbbd1qlsevkho1d.apps.googleusercontent.com'
+    #   config.client_secret = '1U3-Krii5x1oLPrwD5zgn-ry'
+    # elsif !config.client_id || !config.client_secret
+    #   fail(ArgumentError, 'client_id and client_secret must be both specified or both omitted')
+    # end
+    
+    if !config.client_id || !config.client_secret
       fail(ArgumentError, 'client_id and client_secret must be both specified or both omitted')
-    end
+    end 
 
     if proxy
       fail(
@@ -149,6 +154,7 @@ module GoogleDrive
       credentials.refresh_token = config.refresh_token
       credentials.fetch_access_token!
     else
+      return nil if prompt
       $stderr.print("\n1. Open this page:\n%s\n\n" % credentials.authorization_uri)
       $stderr.print('2. Enter the authorization code shown in the page: ')
       credentials.code = $stdin.gets.chomp
