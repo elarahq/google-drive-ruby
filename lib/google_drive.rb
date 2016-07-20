@@ -135,7 +135,7 @@ module GoogleDrive
     # end
     
     if !config.client_id || !config.client_secret
-      fail(ArgumentError, 'client_id and client_secret must be both specified or both omitted')
+      fail(ArgumentError, 'client_id and/or client_secret must be both specified')
     end 
 
     if proxy
