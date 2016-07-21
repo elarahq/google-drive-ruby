@@ -106,7 +106,7 @@ module GoogleDrive
   #   scope=
   #   save
   def self.saved_session(
-      path_or_config = nil, proxy = nil, client_id = nil, client_secret = nil, prompt=false)
+      path_or_config = nil, proxy = nil, client_id = nil, client_secret = nil, prompt=true)
     config =
       case path_or_config
       when String
@@ -154,7 +154,7 @@ module GoogleDrive
       credentials.refresh_token = config.refresh_token
       credentials.fetch_access_token!
     else
-      return nil if prompt
+      return nil if !prompt
       $stderr.print("\n1. Open this page:\n%s\n\n" % credentials.authorization_uri)
       $stderr.print('2. Enter the authorization code shown in the page: ')
       credentials.code = $stdin.gets.chomp
