@@ -16,7 +16,8 @@ module GoogleDrive
     include(Util)
     extend(Forwardable)
 
-    def initialize(session, file) #:nodoc:
+    # @api private
+    def initialize(session, file)
       @session = session
       @file = file
       api_permissions = @session.drive.list_permissions(@file.id, fields: '*')
@@ -33,11 +34,12 @@ module GoogleDrive
     # Also you can pass the second hash argument +options+, which specifies
     # optional query parameters for the API.
     # Possible keys of +options+ are,
-    # * :emailMessage  -- A custom message to include in notification emails
-    # * :sendNotificationEmails  -- Whether to send notification emails
-    #   when sharing to users or groups.
-    #
-    # NOTE: This sends email to the new people.
+    # * :email_message  -- A custom message to include in notification emails
+    # * :send_notification_email  -- Whether to send notification emails
+    #   when sharing to users or groups. (Default: true)
+    # * :transfer_ownership  -- Whether to transfer ownership to the specified user
+    #   and downgrade the current owner to a writer. This parameter is required as an
+    #   acknowledgement of the side effect. (Default: false)
     #
     # e.g.
     #   # A specific user can read or write.
@@ -57,7 +59,7 @@ module GoogleDrive
     #   # Set ACL without sending notification emails
     #   spreadsheet.acl.push(
     #       {type: "user", email_address: "example2@gmail.com", role: "reader"},
-    #       {sendNotificationEmails: false})
+    #       {send_notification_email: false})
     #
     # See here for parameter detais:
     # https://developers.google.com/drive/v3/reference/permissions/create
@@ -78,7 +80,8 @@ module GoogleDrive
       @entries.delete(entry)
     end
 
-    def update_role(entry) #:nodoc:
+    # @api private
+    def update_role(entry)
       api_permission = @session.drive.update_permission(
         @file.id, entry.id, {role: entry.role}, fields: '*')
       entry.api_permission = api_permission

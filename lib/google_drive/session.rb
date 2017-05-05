@@ -18,15 +18,23 @@ require 'google_drive/worksheet'
 require 'google_drive/collection'
 require 'google_drive/file'
 require 'google_drive/config'
+require 'google_drive/access_token_credentials'
 
 module GoogleDrive
-  # Use GoogleDrive.login_with_oauth or GoogleDrive.saved_session to get
-  # GoogleDrive::Session object.
+  # A session for Google Drive operations.
+  #
+  # Use from_credentials, from_access_token, from_service_account_key or from_config
+  # class method to construct a GoogleDrive::Session object.
   class Session
     include(Util)
     extend(Util)
 
-    # The same as GoogleDrive.login_with_oauth.
+    DEFAULT_SCOPE = [
+      'https://www.googleapis.com/auth/drive',
+      'https://spreadsheets.google.com/feeds/'
+    ]
+
+    # Equivalent of either from_credentials or from_access_token.
     def self.login_with_oauth(credentials_or_access_token, proxy = nil)
       Session.new(credentials_or_access_token, proxy)
     end
@@ -34,6 +42,91 @@ module GoogleDrive
     # Creates a dummy GoogleDrive::Session object for testing.
     def self.new_dummy
       Session.new(nil)
+    end
+
+    # Constructs a GoogleDrive::Session object from OAuth2 credentials such as
+    # Google::Auth::UserRefreshCredentials.
+    #
+    # See https://github.com/gimite/google-drive-ruby/blob/master/doc/authorization.md for a usage example.
+    def self.from_credentials(credentials)
+      Session.new(credentials)
+    end
+
+    # Constructs a GoogleDrive::Session object from OAuth2 access token string.
+    def self.from_access_token(access_token)
+      Session.new(access_token)
+    end
+
+    # Constructs a GoogleDrive::Session object from a service account key JSON.
+    #
+    # You can pass either the path to a JSON file, or an IO-like object with the JSON.
+    #
+    # See https://github.com/gimite/google-drive-ruby/blob/master/doc/authorization.md for a usage example.
+    def self.from_service_account_key(json_key_path_or_io, scope = DEFAULT_SCOPE)
+      if json_key_path_or_io.is_a?(String)
+        open(json_key_path_or_io) do |f|
+          from_service_account_key(f, scope)
+        end
+      else
+        credentials = Google::Auth::ServiceAccountCredentials.make_creds(
+            json_key_io: json_key_path_or_io, scope: scope)
+        Session.new(credentials)
+      end
+    end
+
+    # Returns GoogleDrive::Session constructed from a config JSON file at +config+.
+    #
+    # +config+ is the path to the config file.
+    #
+    # This will prompt the credential via command line for the first time and save it to
+    # +config+ for later usages.
+    #
+    # See https://github.com/gimite/google-drive-ruby/blob/master/doc/authorization.md for a usage example.
+    #
+    # You can also provide a config object that must respond to:
+    #   client_id
+    #   client_secret
+    #   refesh_token
+    #   refresh_token=
+    #   scope
+    #   scope=
+    #   save
+    def self.from_config(config, options = {})
+      if config.is_a?(String)
+        config = Config.new(config)
+      end
+
+      config.scope ||= DEFAULT_SCOPE
+
+      if options[:client_id] && options[:client_secret]
+        config.client_id = options[:client_id]
+        config.client_secret = options[:client_secret]
+      end
+      if !config.client_id && !config.client_secret
+        fail(ArgumentError, 'client_id and client_secret must be both specified')
+      end
+
+      credentials = Google::Auth::UserRefreshCredentials.new(
+        client_id: config.client_id,
+        client_secret: config.client_secret,
+        scope: config.scope,
+        redirect_uri: 'urn:ietf:wg:oauth:2.0:oob')
+
+      if config.refresh_token
+        credentials.refresh_token = config.refresh_token
+        credentials.fetch_access_token!
+      else
+        return nil if !options[:prompt]
+        $stderr.print("\n1. Open this page:\n%s\n\n" % credentials.authorization_uri)
+        $stderr.print('2. Enter the authorization code shown in the page: ')
+        credentials.code = $stdin.gets.chomp
+        credentials.fetch_access_token!
+        config.refresh_token = credentials.refresh_token
+      end
+
+      config.save
+
+      Session.new(credentials)
     end
 
     def initialize(credentials_or_access_token, proxy = nil)
@@ -45,13 +138,11 @@ module GoogleDrive
 
       if credentials_or_access_token
         if credentials_or_access_token.is_a?(String)
-          credentials = Google::Auth::UserRefreshCredentials.new(
-            access_token: credentials_or_access_token)
+          credentials = AccessTokenCredentials.new(credentials_or_access_token)
         # Equivalent of credentials_or_access_token.is_a?(OAuth2::AccessToken),
         # without adding dependency to "oauth2" library.
         elsif credentials_or_access_token.class.ancestors.any?{ |m| m.name == 'OAuth2::AccessToken' }
-          credentials = Google::Auth::UserRefreshCredentials.new(
-            access_token: credentials_or_access_token.token)
+          credentials = AccessTokenCredentials.new(credentials_or_access_token.token)
         else
           credentials = credentials_or_access_token
         end
@@ -99,9 +190,11 @@ module GoogleDrive
         &block)
     end
 
-    # Returns GoogleDrive::File or its subclass whose title exactly matches +title+.
-    # Returns nil if not found. If multiple files with the +title+ are found, returns
-    # one of them.
+    # Returns a file (including a spreadsheet and a folder) whose title exactly matches +title+.
+    #
+    # Returns an instance of GoogleDrive::File or its subclass (GoogleDrive::Spreadsheet,
+    # GoogleDrive::Collection). Returns nil if not found. If multiple files with the +title+ are
+    # found, returns one of them.
     #
     # If given an Array, traverses collections by title. e.g.
     #   session.file_by_title(["myfolder", "mysubfolder/even/w/slash", "myfile"])
@@ -113,15 +206,22 @@ module GoogleDrive
       end
     end
 
-    # Returns GoogleDrive::File or its subclass with a given +id+.
+    # Returns a file (including a spreadsheet and a folder) with a given +id+.
+    #
+    # Returns an instance of GoogleDrive::File or its subclass (GoogleDrive::Spreadsheet,
+    # GoogleDrive::Collection).
     def file_by_id(id)
       api_file = self.drive.get_file(id, fields: '*')
       wrap_api_file(api_file)
     end
 
-    # Returns GoogleDrive::File or its subclass with a given +url+. +url+ must be eitehr of:
+    # Returns a file (including a spreadsheet and a folder) with a given +url+.
+    # +url+ must be eitehr of:
     # - URL of the page you open to access a document/spreadsheet in your browser
     # - URL of worksheet-based feed of a spreadseet
+    #
+    # Returns an instance of GoogleDrive::File or its subclass (GoogleDrive::Spreadsheet,
+    # GoogleDrive::Collection).
     def file_by_url(url)
       file_by_id(url_to_id(url))
     end
@@ -319,7 +419,8 @@ module GoogleDrive
       upload_from_source(io, title, params)
     end
 
-    def wrap_api_file(api_file) #:nodoc:
+    # @api private
+    def wrap_api_file(api_file)
       case api_file.mime_type
       when 'application/vnd.google-apps.folder'
         return Collection.new(self, api_file)
@@ -330,7 +431,8 @@ module GoogleDrive
       end
     end
 
-    def execute_paged!(opts, &block) #:nodoc:
+    # @api private
+    def execute_paged!(opts, &block)
       if block
         page_token = nil
         loop do
@@ -354,7 +456,8 @@ module GoogleDrive
       end
     end
 
-    def request(method, url, params = {}) #:nodoc:
+    # @api private
+    def request(method, url, params = {})
       # Always uses HTTPS.
       url           = url.gsub(%r{^http://}, 'https://')
       data          = params[:data]
